@@ -1,0 +1,119 @@
+
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Upload Image</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudStack AlignItems="AlignItems.Center" StretchItems="StretchItems.End" Row>
+            <MudFileUpload T="IBrowserFile" Accept=".png, .jpg, .jpeg" FilesChanged="OnFileUpload" MaximumFileCount="100">
+                <ActivatorContent>
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.CloudUpload">
+                        Upload File
+                    </MudButton>
+                </ActivatorContent>
+            </MudFileUpload>
+            
+            @if (_loading)
+            {
+                <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="200px" Width="200px" />
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(_imageByteStr))
+                {
+                    <MudImage Src="@_imageByteStr" Height="200"/>
+                }
+            }
+        </MudStack>
+
+        <MudText Color="Color.Error">@_errorMessage</MudText>
+    </DialogContent>
+    <DialogActions>
+        @if (!_loading && !string.IsNullOrEmpty(_imageByteStr))
+        {
+            <MudButton OnClick="Confirm" Color="Color.Success">Confirm</MudButton>
+        }
+        <MudButton OnClick="Cancel">Discard</MudButton>
+    </DialogActions>
+</MudDialog>
+
+
+@code {
+
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; }
+
+    private byte[] _bytes = [];
+    private string _imageByteStr = string.Empty;
+
+    private bool _loading;
+    private string _errorMessage = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var options = MudDialog.Options with
+        {
+            MaxWidth = MaxWidth.False,
+            BackdropClick = false,
+        };
+
+        await MudDialog.SetOptionsAsync(options);
+    }
+
+
+    private async Task OnFileUpload(IBrowserFile? file)
+    {
+        _errorMessage = string.Empty;
+        _imageByteStr = string.Empty;
+        _bytes = [];
+        
+        if (file is null || !file.ContentType.StartsWith("image/")) return;
+        
+        _loading = true;
+        await InvokeAsync(StateHasChanged);
+
+        // try to rescale image
+        try
+        {
+            var resizer = new Data.SkiaSharpImageResizer();
+            const int maxUploadSizeKB = 5 * 1024 * 1024; // 5 MB
+            _bytes = await resizer.ApproxResizeImageAsync(file.OpenReadStream(maxUploadSizeKB), 2500);
+        }
+        catch
+        {
+            var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+
+            await using var fs = new FileStream(path, FileMode.Create);
+            await file.OpenReadStream(file.Size).CopyToAsync(fs);
+            _bytes = new byte[file.Size];
+
+            fs.Position = 0;
+            _ = await fs.ReadAsync(_bytes);
+            fs.Close();
+
+            File.Delete(path);
+            
+            _errorMessage = $"Image is too large to compress ({(int)(_bytes.Length / 1e6 * 100) / 100.0} MB)...";
+        }
+
+        var extension = Path.GetExtension(file.Name).ToLower();
+
+        if (_bytes.Any())
+        {
+            _imageByteStr = $"data:image/*;base64,{Convert.ToBase64String(_bytes)}";
+        }
+
+        _loading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+
+    private void Confirm() => MudDialog.Close(DialogResult.Ok(_bytes));
+
+    private void Cancel() => MudDialog.Cancel();
+
+
+}
